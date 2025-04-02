@@ -1,0 +1,111 @@
+import cv2
+import numpy as np
+import os
+from datetime import datetime
+import face_recognition  # type: ignore
+import pandas as pd
+
+# Path to images folder
+path = r'C:\Users\ESHANK\Downloads\College\Image'
+
+# Define attendance folder and file path
+attendance_folder = os.path.join(os.getcwd(), 'attendance')
+attendance_path = os.path.join(attendance_folder, 'Attendance.csv')
+
+# Create 'attendance' folder if not present
+if not os.path.exists(attendance_folder):
+    os.makedirs(attendance_folder)
+
+# Check and delete 'Attendance.csv' if it exists
+if os.path.exists(attendance_path):
+    print("Attendance file found, deleting...")
+    os.remove(attendance_path)
+else:
+    df = pd.DataFrame(columns=['Name', 'Time'])
+    df.to_csv(attendance_path, index=False)
+
+# Load images and get class names
+images = []
+classNames = []
+myList = os.listdir(path)
+print(f"Images found: {myList}")
+
+for cl in myList:
+    curImg = cv2.imread(f'{path}/{cl}')
+    if curImg is not None:
+        images.append(curImg)
+        classNames.append(os.path.splitext(cl)[0])
+print(f"Class Names: {classNames}")
+
+# Encode known images
+def findEncodings(images):
+    encodeList = []
+    for img, cl in zip(images, myList):
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        encodes = face_recognition.face_encodings(img)
+        if len(encodes) > 0:
+            encodeList.append(encodes[0])
+        else:
+            print(f"No face found in {cl}, skipping...")
+    return encodeList
+
+# Mark attendance in CSV
+def markAttendance(name):
+    df = pd.read_csv(attendance_path)
+    if name not in df['Name'].values:
+        now = datetime.now()
+        dtString = now.strftime('%H:%M:%S')
+        df = pd.concat([df, pd.DataFrame({'Name': [name], 'Time': [dtString]})], ignore_index=True)
+        df.to_csv(attendance_path, index=False)
+
+# Encode known faces
+encodeListKnown = findEncodings(images)
+print('Encoding Complete!')
+
+# Start capturing from the webcam
+cap = cv2.VideoCapture(0)  # 0 for default webcam, 1 for external webcam if available
+
+while True:
+    success, img = cap.read()
+    if not success:
+        print("Failed to capture video. Check your webcam connection.")
+        break
+
+    # Resize and convert to RGB
+    imgS = cv2.resize(img, (0, 0), None, 0.25, 0.25)
+    imgS = cv2.cvtColor(imgS, cv2.COLOR_BGR2RGB)
+
+    # Detect faces and encode
+    facesCurFrame = face_recognition.face_locations(imgS)
+    encodesCurFrame = face_recognition.face_encodings(imgS, facesCurFrame)
+
+    for encodeFace, faceLoc in zip(encodesCurFrame, facesCurFrame):
+        matches = face_recognition.compare_faces(encodeListKnown, encodeFace)
+        faceDis = face_recognition.face_distance(encodeListKnown, encodeFace)
+
+        if len(faceDis) > 0:
+            matchIndex = np.argmin(faceDis)
+            if matches[matchIndex]:
+                name = classNames[matchIndex].upper()
+
+                # Draw rectangle and name
+                y1, x2, y2, x1 = faceLoc
+                y1, x2, y2, x1 = y1 * 4, x2 * 4, y2 * 4, x1 * 4
+                cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.rectangle(img, (x1, y2 - 35), (x2, y2), (0, 255, 0), cv2.FILLED)
+                cv2.putText(img, name, (x1 + 6, y2 - 6), cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 2)
+
+                # Mark attendance
+                markAttendance(name)
+
+    # Show the frame
+    cv2.imshow('Webcam', img)
+
+    # Press 'q' to exit
+    key = cv2.waitKey(1)
+    if key == ord('q'):
+        break
+
+# Release webcam and close windows
+cap.release()
+cv2.destroyAllWindows()
